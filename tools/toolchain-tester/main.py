@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 import tempfile
 
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import List
 from printer import Printer as P
 from printer import print_test_results, print_test_results_machine
 
+from settings import Config
 from testrunner import TestRunner
 from testsuite import TestSuite
 
@@ -48,13 +48,14 @@ def main():
 
     args = parser.parse_args()
 
+    Config.cdt_path = args.cdt
     P.verbose = args.verbose
 
     abs_test_directory = os.path.abspath(args.test_directory)
 
     temp_dir = tempfile.mkdtemp()
 
-    P.print(f"Temp files will be written to {temp_dir}", verbose=True)
+    P.print(f"Temp files will be written to {temp_dir}...", verbose=True)
 
     os.chdir(temp_dir)
 
@@ -66,7 +67,7 @@ def main():
         if os.path.isdir(abs_f):
             test_directories.append(abs_f)
 
-    test_suites = list(map(lambda d: TestSuite(d, args.cdt), test_directories))
+    test_suites = list(map(lambda d: TestSuite(d), test_directories))
 
     start = timer()
     test_runner = TestRunner(test_suites, args.tests, args.jobs)
@@ -74,14 +75,9 @@ def main():
     end = timer()
 
     if args.format == "human":
-        failures = print_test_results(test_results, end - start)
+        print_test_results(test_results, end - start)
     else:
-        failures = print_test_results_machine(test_results, end - start)
-
-    if failures:
-        sys.exit(1)
-
-    sys.exit(0)
+        print_test_results_machine(test_results, end - start)
 
 
 def get_cdt_path() -> str:

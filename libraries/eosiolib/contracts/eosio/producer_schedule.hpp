@@ -41,7 +41,7 @@ namespace eosio {
 
     /// @endcond
 
-    CDT_REFLECT(producer_name, block_signing_key);
+    EOSLIB_SERIALIZE( producer_key, (producer_name)(block_signing_key) )
   };
 
    /**
@@ -66,8 +66,6 @@ namespace eosio {
        * List of producers for this schedule, including its signing key
        */
       std::vector<producer_key>    producers;
-
-      CDT_REFLECT(version, producers);
    };
 
    /**
@@ -97,7 +95,7 @@ namespace eosio {
        */
       uint16_t   weight;
 
-      CDT_REFLECT(key, weight);
+      EOSLIB_SERIALIZE( key_weight, (key)(weight) )
    };
 
    /**
@@ -125,7 +123,7 @@ namespace eosio {
 
       bool is_valid()const;
 
-      CDT_REFLECT(threshold, keys);
+      EOSLIB_SERIALIZE( block_signing_authority_v0, (threshold)(keys) )
    };
 
    /**
@@ -160,7 +158,7 @@ namespace eosio {
          return a.producer_name < b.producer_name;
       }
 
-      CDT_REFLECT(producer_name, authority);
+      EOSLIB_SERIALIZE( producer_authority, (producer_name)(authority) )
    };
 
    /**

@@ -1,14 +1,6 @@
 #! /bin/bash
 
 VARIANT=$1
-if [[ ${VARIANT} == "deb" ]]; then
-    if [ -z "$2" ]; then
-        echo "Error, OS argument missing for deb package type"
-        exit -1
-    else
-        OS=$2
-    fi
-fi
 
 VERSION_NO_SUFFIX="@VERSION_MAJOR@.@VERSION_MINOR@.@VERSION_PATCH@"
 VERSION_SUFFIX="@VERSION_SUFFIX@"
@@ -38,7 +30,7 @@ mkdir -p tmp
 if [[ ${VARIANT} == "brew" ]]; then
    . ./generate_bottle.sh
 elif [[ ${VARIANT} == "deb" ]]; then
-   . ./generate_deb.sh ${OS}
+   . ./generate_deb.sh
 elif [[ ${VARIANT} == "rpm" ]]; then
    . ./generate_rpm.sh
 else

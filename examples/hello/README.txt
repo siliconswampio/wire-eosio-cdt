@@ -1,6 +1,7 @@
 --- hello Project ---
 
  -- How to Build with CMake and Make --
+   - mkdir build
    - cd into the 'build' directory
    - run the command 'cmake ..'
    - run the command 'make'
@@ -12,6 +13,7 @@
 - Additions to cmake should be done to the CMakeLists.txt in the './src' directory and not in the top level CMakeLists.txt
 
  -- How to build with eosio-cpp --
+   - mkdir build
    - cd into the 'build' directory
    - run the command 'eosio-cpp -abigen ../src/hello.cpp -o hello.wasm -I ../include/'
 

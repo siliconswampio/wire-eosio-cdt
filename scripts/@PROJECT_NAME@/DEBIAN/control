@@ -1,0 +1,8 @@
+Package: @PROJECT_NAME@ 
+Version: @VERSION_MAJOR@.@VERSION_MINOR@.@VERSION_PATCH@-@VERSION_SUFFIX@
+Section: devel
+Priority: optional
+Architecture: amd64
+Homepage: @URL@ 
+Maintainer: @EMAIL@ 
+Description: @DESC@

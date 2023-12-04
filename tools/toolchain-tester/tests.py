@@ -1,19 +1,19 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import Dict, List
-from abc import ABC, abstractmethod
+
+if TYPE_CHECKING:
+    from testsuite import TestSuite
 
 import difflib
 import json
 import os
 import subprocess
-import re
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Dict, List
 
 from printer import Printer as P
-from errors import TestFailure
-
-if TYPE_CHECKING:
-    from testsuite import TestSuite
+from settings import Config, TestFailure
 
 
 class Test(ABC):
@@ -45,7 +45,7 @@ class Test(ABC):
         cf = self.test_json.get("compile_flags")
         args = cf if cf else []
 
-        eosio_cpp = os.path.join(self.test_suite.cdt_path, "eosio-cpp")
+        eosio_cpp = os.path.join(Config.cdt_path, "eosio-cpp")
         self._run(eosio_cpp, args)
 
     def handle_test_result(self, res: subprocess.CompletedProcess, expected_pass=True):
@@ -90,22 +90,15 @@ class Test(ABC):
             expected_stderr = expected["stderr"]
             actual_stderr = res.stderr.decode("utf-8")
 
-            if expected_stderr not in actual_stderr and not re.search(expected_stderr, actual_stderr, flags=re.S):
+            if expected_stderr not in actual_stderr:
                 self.success = False
                 raise TestFailure(
                     f"expected {expected_stderr} stderr but got {actual_stderr}",
                     failing_test=self,
                 )
 
-        if expected.get("abi") or expected.get("abi-file"):
-            if expected.get("abi"):
-                expected_abi = expected["abi"]
-            else:
-                full_path = os.path.join(self.test_suite.directory, expected["abi-file"])
-                expected_abi_file = open(full_path)
-                expected_abi = expected_abi_file.read()
-                expected_abi_file.close()
-
+        if expected.get("abi"):
+            expected_abi = expected["abi"]
             with open(f"{self._name}.abi") as f:
                 actual_abi = f.read()
 
@@ -194,13 +187,4 @@ class CompileFailTest(Test):
         res = subprocess.run(command, capture_output=True)
         self.handle_test_result(res, expected_pass=False)
 
-        return res
-
-class AbigenFailTest(Test):
-    def _run(self, eosio_cpp, args):
-        command = [eosio_cpp, self.cpp_file, "-abigen_output=''"]
-        command.extend(args)
-        res = subprocess.run(command, capture_output=True)
-        self.handle_test_result(res, expected_pass=False)
-        
         return res

@@ -5,17 +5,14 @@
 #include "clang/Basic/Builtins.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
-#include "clang/AST/Decl.h"
 #include "llvm/Support/raw_ostream.h"
-#include <eosio/utils.hpp>
-#include <eosio/error_emitter.hpp>
 #include <functional>
 #include <vector>
 #include <string>
 #include <map>
-#include <regex>
 #include <utility>
-#include <variant>
+#include <regex>
+#include <eosio/utils.hpp>
 
 namespace eosio { namespace cdt {
 
@@ -104,18 +101,12 @@ struct simple_ricardian_tokenizer {
 };
 
 struct generation_utils {
+   std::function<void()> error_handler;
    std::vector<std::string> resource_dirs;
    std::string contract_name;
-   inline static std::string parsed_contract_name = ""; // obtained by parsing methods/records
-   bool suppress_ricardian_warnings;
 
-   generation_utils() : resource_dirs({"./"}) {}
-   generation_utils( const std::vector<std::string>& paths ) : resource_dirs(paths) {}
-
-   static error_emitter& get_error_emitter() {
-      static error_emitter ee;
-      return ee;
-   }
+   generation_utils( std::function<void()> err ) : error_handler(err), resource_dirs({"./"}) {}
+   generation_utils( std::function<void()> err, const std::vector<std::string>& paths ) : error_handler(err), resource_dirs(paths) {}
 
    static inline bool is_ignorable( const clang::QualType& type ) {
       auto check = [&](const clang::Type* pt) {
@@ -156,7 +147,6 @@ struct generation_utils {
 
    inline void set_contract_name( const std::string& cn ) { contract_name = cn; }
    inline std::string get_contract_name()const { return contract_name; }
-   static inline std::string get_parsed_contract_name() { return parsed_contract_name; }
    inline void set_resource_dirs( const std::vector<std::string>& rd ) {
       llvm::SmallString<128> cwd;
       auto has_real_path = llvm::sys::fs::real_path("./", cwd, true);
@@ -226,10 +216,6 @@ struct generation_utils {
       return {};
    }
 
-   inline void set_suppress_ricardian_warning(bool suppress_ricardian_warnings) {
-      this->suppress_ricardian_warnings = suppress_ricardian_warnings;
-   }
-
    inline std::string get_ricardian_clauses() {
       return read_file(get_clauses_filename());
    }
@@ -242,9 +228,7 @@ struct generation_utils {
       std::map<std::string, std::string> rcs;
       simple_ricardian_tokenizer srt(contracts);
       if (contracts.empty()) {
-         if (!suppress_ricardian_warnings) {
-            std::cout << "Warning, empty ricardian clause file\n";
-         }
+         std::cout << "Warning, empty ricardian clause file\n";
          return rcs;
       }
 
@@ -260,9 +244,7 @@ struct generation_utils {
       std::vector<std::pair<std::string, std::string>> clause_pairs;
       simple_ricardian_tokenizer srt(clauses);
       if (clauses.empty()) {
-         if (!suppress_ricardian_warnings) {
-            std::cout << "Warning, empty ricardian clause file\n";
-         }
+         std::cout << "Warning, empty ricardian clause file\n";
          return clause_pairs;
       }
 
@@ -282,8 +264,7 @@ struct generation_utils {
       if (name.empty()) {
          name = decl->getParent()->getName().str();
       }
-      parsed_contract_name = name;
-      return cn == parsed_contract_name;
+      return name == cn;
    }
 
    static inline bool is_eosio_contract( const clang::CXXRecordDecl* decl, const std::string& cn ) {
@@ -297,9 +278,9 @@ struct generation_utils {
          auto nm = pd->getEosioContractAttr()->getName().str();
          name = nm.empty() ? pd->getName().str() : nm;
       }
-      parsed_contract_name = name;
-      return cn == parsed_contract_name;
+      return cn == name;
    }
+
 
    inline bool is_template_specialization( const clang::QualType& type, const std::vector<std::string>& names ) {
       auto check = [&](const clang::Type* pt) {
@@ -308,13 +289,10 @@ struct generation_utils {
                if ( names.empty() ) {
                   return true;
                } else {
-                  for ( auto name : names ) {
-                     if ( const auto* decl = rt->getDecl() ) {
-                        if (decl->getName().str() == name) {
-                           return true;
-                        }
+                  for ( auto name : names )
+                     if ( rt->getDecl()->getName().str() == name ) {
+                        return true;
                      }
-                  }
                }
             }
          }
@@ -329,53 +307,20 @@ struct generation_utils {
 
       return is_specialization;
    }
-
-   using template_arg_t = std::variant<clang::QualType, clang::Expr*, llvm::APSInt>;
-
-   inline template_arg_t get_template_argument( const clang::QualType& type, int index = 0 ) {
-      template_arg_t ret_val;
-
-      auto resolve = [&](const clang::Type* t) {
+   inline clang::TemplateArgument get_template_argument( const clang::QualType& type, int index = 0 ) {
+      auto ret = [&](const clang::Type* t) {
          auto tst = llvm::dyn_cast<clang::TemplateSpecializationType>(t);
          if (tst) {
             auto arg = tst->getArg(index);
-            if ( arg.getKind() == clang::TemplateArgument::ArgKind::Type ) {
-               ret_val = arg.getAsType();
-               return;
-            } else if ( arg.getKind() == clang::TemplateArgument::ArgKind::Integral ) {
-               ret_val = arg.getAsIntegral();
-               return;
-            } else if ( arg.getKind() == clang::TemplateArgument::ArgKind::Expression ) {
-               ret_val = arg.getAsExpr();
-               return;
-            }
+            return arg.getAsType();
          }
-         CDT_INTERNAL_ERROR("Wrong type of template specialization");
+         std::cout << "Internal error, wrong type of template specialization\n";
+         error_handler();
+         return tst->getArg(index).getAsType();
       };
-
       if (auto pt = llvm::dyn_cast<clang::ElaboratedType>(type.getTypePtr()))
-         resolve(pt->desugar().getTypePtr());
-      else
-         resolve(type.getTypePtr());
-
-      return ret_val;
-   }
-
-   inline std::string get_template_argument_as_string( const clang::QualType& type, int index = 0 ) {
-      auto arg = get_template_argument( type, index );
-      if (std::holds_alternative<clang::QualType>(arg)) {
-         return translate_type(std::get<clang::QualType>(arg));
-      }
-      else if (std::holds_alternative<clang::Expr*>(arg)) {
-         if (auto ce = llvm::dyn_cast<clang::CastExpr>(std::get<clang::Expr*>(arg))) {
-            auto il = llvm::dyn_cast<clang::IntegerLiteral>(ce->getSubExpr());
-            return std::to_string(il->getValue().getLimitedValue());
-         }
-      } else {
-         return std::get<llvm::APSInt>(arg).toString(10);
-      }
-      CDT_INTERNAL_ERROR("Tried to get a non-existent template argument");
-      __builtin_unreachable();
+         return ret(pt->desugar().getTypePtr());
+      return ret(type.getTypePtr());
    }
 
    std::string get_base_type_name( const clang::QualType& type ) {
@@ -456,8 +401,6 @@ struct generation_utils {
          {"unsigned_int", "varuint32"},
          {"signed_int",   "varint32"},
 
-         {"basic_string<char>", "string"},
-
          {"block_timestamp", "block_timestamp_type"},
          {"capi_name",    "name"},
          {"capi_public_key", "public_key"},
@@ -469,7 +412,7 @@ struct generation_utils {
          {"fixed_bytes_32", "checksum256"},
          {"fixed_bytes_64", "checksum512"}
       };
-
+      
       auto ret = translation_table[t];
 
       if (ret == "")
@@ -492,9 +435,20 @@ struct generation_utils {
       auto tst = llvm::dyn_cast<clang::TemplateSpecializationType>(pt ? pt->desugar().getTypePtr() : type.getTypePtr());
       std::string ret = tst->getTemplateName().getAsTemplateDecl()->getName().str()+"_";
       for (int i=0; i < tst->getNumArgs(); ++i) {
-         ret += get_template_argument_as_string(type, i);
-         if (i < tst->getNumArgs() - 1) {
-            ret += "_";
+         auto arg = get_template_argument(type,i);
+         if (arg.getAsExpr()) {
+            auto ce = llvm::dyn_cast<clang::CastExpr>(arg.getAsExpr());
+            if (ce) { 
+               auto il = llvm::dyn_cast<clang::IntegerLiteral>(ce->getSubExpr());
+               ret += std::to_string(il->getValue().getLimitedValue());
+               if ( i < tst->getNumArgs()-1 )
+                  ret += "_";
+            }
+         }
+         else {
+            ret += _translate_type(get_template_argument( type, i ).getAsType());
+            if ( i < tst->getNumArgs()-1 )
+               ret += "_";
          }
       }
       return _translate_type(replace_in_name(ret));
@@ -502,32 +456,25 @@ struct generation_utils {
 
    inline std::string translate_type( const clang::QualType& type ) {
       if ( is_template_specialization( type, {"ignore"} ) )
-         return get_template_argument_as_string( type );
+         return translate_type(get_template_argument( type ).getAsType() );
       else if ( is_template_specialization( type, {"binary_extension"} ) ) {
-         auto t = get_template_argument_as_string( type );
+         auto t = translate_type(get_template_argument( type ).getAsType());
          return t+"$";
       }
       else if ( is_template_specialization( type, {"vector", "set", "deque", "list"} ) ) {
-         auto t = get_template_argument_as_string( type );
-         if ( t=="int8" || t=="uint8" ) {
-            return "bytes";
-         } else {
-            return t+"[]";
-         }
-      }
-      else if (is_tuple(type)) {
-         return translate_type(get_nested_type(type));
+         auto t =translate_type(get_template_argument( type ).getAsType());
+         return t=="int8" ? "bytes" : t+"[]";
       }
       else if ( is_template_specialization( type, {"optional"} ) )
-         return get_template_argument_as_string( type )+"?";
+         return translate_type(get_template_argument( type ).getAsType())+"?";
       else if ( is_template_specialization( type, {"map"} )) {
-         auto t0 = get_template_argument_as_string( type );
-         auto t1 = get_template_argument_as_string( type, 1);
+         auto t0 = translate_type(get_template_argument( type ).getAsType());
+         auto t1 = translate_type(get_template_argument( type, 1).getAsType());
          return replace_in_name("pair_" + t0 + "_" + t1 + "[]");
       }
       else if ( is_template_specialization( type, {"pair"} )) {
-         auto t0 = get_template_argument_as_string( type );
-         auto t1 = get_template_argument_as_string( type, 1);
+         auto t0 = translate_type(get_template_argument( type ).getAsType());
+         auto t1 = translate_type(get_template_argument( type, 1).getAsType());
          return replace_in_name("pair_" + t0 + "_" + t1);
       }
       else if ( is_template_specialization( type, {"tuple"} )) {
@@ -535,7 +482,7 @@ struct generation_utils {
          auto tst = llvm::dyn_cast<clang::TemplateSpecializationType>( pt ? pt->desugar().getTypePtr() : type.getTypePtr() );
          std::string ret = "tuple_";
          for (int i=0; i < tst->getNumArgs(); ++i) {
-            ret += get_template_argument_as_string( type, i );
+            ret += _translate_type(get_template_argument( type, i ).getAsType());
             if ( i < tst->getNumArgs()-1 )
                ret += "_";
          }
@@ -546,9 +493,19 @@ struct generation_utils {
          auto tst = llvm::dyn_cast<clang::TemplateSpecializationType>(pt ? pt->desugar().getTypePtr() : type.getTypePtr() );
          std::string ret = tst->getTemplateName().getAsTemplateDecl()->getName().str()+"_";
          for (int i=0; i < tst->getNumArgs(); ++i) {
-            ret += get_template_argument_as_string(type,i);
-            if ( i < tst->getNumArgs()-1 )
-               ret += "_";
+            auto arg = get_template_argument(type,i);
+            if (auto ce = arg.getKind() == clang::TemplateArgument::ArgKind::Expression
+                  ? llvm::dyn_cast<clang::CastExpr>(arg.getAsExpr()) : nullptr) {
+               auto il = llvm::dyn_cast<clang::IntegerLiteral>(ce->getSubExpr());
+               ret += std::to_string(il->getValue().getLimitedValue());
+               if ( i < tst->getNumArgs()-1 )
+                  ret += "_";
+            }
+            else {
+               ret += translate_type(get_template_argument( type, i ).getAsType());
+               if ( i < tst->getNumArgs()-1 )
+                  ret += "_";
+            }
          }
          return _translate_type(replace_in_name(ret));
       }
@@ -596,10 +553,6 @@ struct generation_utils {
       return builtins.count(_translate_type(t)) >= 1;
    }
 
-   inline bool is_reserved( const std::string& t ) {
-      return t.find("__") != std::string::npos;
-   }
-
    inline bool is_builtin_type( const clang::QualType& t ) {
       std::string nt = translate_type(t);
       return is_builtin_type(nt);
@@ -634,112 +587,6 @@ struct generation_utils {
          return false;
       if (get_base_type_name(t).find("<") != std::string::npos) return false;
       return get_base_type_name(t).compare(get_type_alias_string(t)) != 0;
-   }
-
-   inline bool is_tuple(const clang::QualType& t) {
-      constexpr std::string_view test_str = "tuple<";
-      return t.getAsString().substr(0, test_str.size()) == test_str;
-   }
-
-   inline clang::QualType get_nested_type(const clang::QualType& t) {
-      if (auto pt = llvm::dyn_cast<clang::ElaboratedType>(t.getTypePtr())) {
-         if (auto tst = llvm::dyn_cast<clang::TemplateSpecializationType>(pt->desugar().getTypePtr())) {
-            if (auto rt = llvm::dyn_cast<clang::ElaboratedType>(tst->desugar())) {
-               return tst->desugar();
-            }
-         }
-      }
-      CDT_INTERNAL_ERROR("Tried to get a nested template type of a template not containing one");
-      __builtin_unreachable();
-   }
-
-   inline bool is_kv_map(const clang::CXXRecordDecl* decl) {
-      return decl->getQualifiedNameAsString().find("eosio::kv::map<") != std::string::npos;
-   }
-
-   // TODO replace this body after this release to reflect the new table type
-   inline bool is_kv_table(const clang::CXXRecordDecl* decl) {
-      for (const auto& base : decl->bases()) {
-         auto type = base.getType();
-         if (type.getAsString().find("eosio::kv::table<") != std::string::npos) {
-            return true;
-         }
-      }
-
-      return false;
-   }
-
-   inline bool is_kv_internal(const clang::CXXRecordDecl* decl) {
-      const std::set<std::string> internal_types {
-         "table",
-         "table_base",
-         "index",
-         "index_base"
-      };
-
-      const auto fqn = decl->getQualifiedNameAsString();
-
-      const auto in_kv_namespace = fqn.find("eosio::kv") != std::string::npos;
-      const bool is_internal = internal_types.count(decl->getNameAsString());
-
-      return in_kv_namespace && is_internal;
-   }
-
-   inline bool is_write_host_func( const clang::FunctionDecl *func_decl ) {
-      static const std::set<std::string> write_host_funcs =
-      {
-         "set_resource_limits",
-         "set_wasm_parameters_packed",
-         "set_resource_limit",
-         "set_proposed_producers",
-         "set_proposed_producers_ex",
-         "set_blockchain_parameters_packed",
-         "set_parameters_packed",
-         "set_kv_parameters_packed",
-         "set_privileged",
-         "db_store_i64",
-         "db_update_i64",
-         "db_remove_i64",
-         "db_idx64_store",
-         "db_idx64_update",
-         "db_idx64_remove",
-         "db_idx128_store",
-         "db_idx128_update",
-         "db_idx128_remove",
-         "db_idx256_store",
-         "db_idx256_update",
-         "db_idx256_remove",
-         "db_idx_double_store",
-         "db_idx_double_update",
-         "db_idx_double_remove",
-         "db_idx_long_double_store",
-         "db_idx_long_double_update",
-         "db_idx_long_double_remove",
-         "kv_erase",
-         "kv_set",
-         "send_deferred",
-         "send_inline",
-         "send_context_free_inline"
-      };
-
-      return write_host_funcs.count(func_decl->getNameInfo().getAsString()) >= 1;
-   }
-
-   inline bool is_deferred_transaction_func( const std::string& t ) {
-      static const std::set<std::string> deferred_transaction_funcs =
-      {
-         "send_deferred",
-      };
-      return deferred_transaction_funcs.count(t) >= 1;
-   }
-
-   inline bool is_inline_action_func( const std::string& t ) {
-      static const std::set<std::string> inline_action_funcs =
-      {
-         "send_inline",
-         "send_context_free_inline"
-      };
-      return inline_action_funcs.count(t) >= 1;
    }
 };
 }} // ns eosio::cdt

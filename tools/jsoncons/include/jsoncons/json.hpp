@@ -36,9 +36,6 @@
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch"
-#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-#else
-#pragma clang diagnostic ignored "-Wimplicit-fallthrough"
 #endif
 
 namespace jsoncons {
